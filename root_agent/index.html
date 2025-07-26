@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADK Agent FastAPI Chat</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom scrollbar for chat messages */
+        .chat-messages::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 10px;
+        }
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+
+        /* Inter font for a clean look */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* Basic button styling */
+        .btn {
+            @apply px-4 py-2 rounded-lg font-semibold shadow-md transition-all duration-200;
+        }
+        .btn-primary {
+            @apply bg-blue-500 text-white hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50;
+        }
+        .btn-secondary {
+            @apply bg-gray-300 text-gray-800 hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50;
+        }
+        .btn-success {
+            @apply bg-green-500 text-white hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50;
+        }
+        .btn-danger {
+            @apply bg-red-500 text-white hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50;
+        }
+
+        /* Loading spinner */
+        .loader {
+            border: 4px solid #f3f3f3; /* Light grey */
+            border-top: 4px solid #3498db; /* Blue */
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white rounded-xl shadow-lg w-full max-w-2xl flex flex-col h-[90vh]">
+        <header class="bg-blue-600 text-white p-4 rounded-t-xl shadow-md">
+            <h1 class="text-2xl font-bold text-center">ADK Agent Chatbot</h1>
+        </header>
+
+        <div class="flex-grow p-4 overflow-y-auto chat-messages space-y-4">
+            <!-- Chat messages will be appended here -->
+        </div>
+
+        <div class="p-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
+            <div class="mb-4 space-y-2">
+                <div>
+                    <label for="userIdInput" class="block text-sm font-medium text-gray-700">User ID:</label>
+                    <input type="text" id="userIdInput" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2" value="default_user">
+                </div>
+                <div>
+                    <label for="sessionIdInput" class="block text-sm font-medium text-gray-700">Session ID (leave empty for new):</label>
+                    <input type="text" id="sessionIdInput" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2">
+                </div>
+            </div>
+
+            <div class="flex flex-col space-y-3">
+                <!-- Text Input -->
+                <div class="flex items-center space-x-2">
+                    <input type="text" id="textInput" placeholder="Type your message..." class="flex-grow p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button id="sendTextBtn" class="btn btn-primary">Send Text</button>
+                </div>
+
+                <!-- Audio Input -->
+                <div class="flex items-center space-x-2">
+                    <input type="file" id="audioInput" accept="audio/*" class="flex-grow p-2 border border-gray-300 rounded-lg bg-white">
+                    <button id="sendAudioBtn" class="btn btn-primary">Send Audio</button>
+                </div>
+
+                <!-- Image Input -->
+                <div class="flex items-center space-x-2">
+                    <input type="file" id="imageInput" accept="image/*" class="flex-grow p-2 border border-gray-300 rounded-lg bg-white">
+                    <button id="sendImageBtn" class="btn btn-primary">Send Image</button>
+                </div>
+
+                <!-- Play Last Response Button -->
+                <button id="playLastResponseBtn" class="btn btn-success flex items-center justify-center">
+                    🔊 Play Last Response
+                    <span id="playLoadingSpinner" class="loader hidden"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatMessagesDiv = document.querySelector('.chat-messages');
+        const textInput = document.getElementById('textInput');
+        const sendTextBtn = document.getElementById('sendTextBtn');
+        const audioInput = document.getElementById('audioInput');
+        const sendAudioBtn = document.getElementById('sendAudioBtn');
+        const imageInput = document.getElementById('imageInput');
+        const sendImageBtn = document.getElementById('sendImageBtn');
+        const playLastResponseBtn = document.getElementById('playLastResponseBtn');
+        const playLoadingSpinner = document.getElementById('playLoadingSpinner');
+        const userIdInput = document.getElementById('userIdInput');
+        const sessionIdInput = document.getElementById('sessionIdInput');
+
+        const API_BASE_URL = 'http://127.0.0.1:8000'; // Make sure this matches your FastAPI server address
+
+        let currentSessionId = localStorage.getItem('adk_session_id') || '';
+        let currentUserId = localStorage.getItem('adk_user_id') || 'default_user';
+        let lastAssistantMessage = ''; // To store the last assistant message for TTS
+
+        // Initialize input fields from localStorage
+        userIdInput.value = currentUserId;
+        sessionIdInput.value = currentSessionId;
+
+        // Save user ID and session ID to localStorage on change
+        userIdInput.addEventListener('change', () => {
+            currentUserId = userIdInput.value;
+            localStorage.setItem('adk_user_id', currentUserId);
+        });
+        sessionIdInput.addEventListener('change', () => {
+            currentSessionId = sessionIdInput.value;
+            localStorage.setItem('adk_session_id', currentSessionId);
+        });
+
+        // Function to display messages in the chat UI
+        function displayMessage(role, content, isImage = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.classList.add('flex', 'items-start', 'gap-3');
+
+            const avatarDiv = document.createElement('div');
+            avatarDiv.classList.add('flex-shrink-0', 'w-8', 'h-8', 'rounded-full', 'flex', 'items-center', 'justify-center', 'text-white', 'font-bold');
+
+            const contentDiv = document.createElement('div');
+            contentDiv.classList.add('p-3', 'rounded-xl', 'max-w-xs', 'md:max-w-md', 'break-words', 'shadow-sm');
+
+            if (role === 'user') {
+                avatarDiv.classList.add('bg-blue-500');
+                avatarDiv.textContent = 'You';
+                contentDiv.classList.add('bg-blue-100', 'text-blue-800', 'ml-auto');
+                messageDiv.classList.add('justify-end');
+            } else {
+                avatarDiv.classList.add('bg-green-500');
+                avatarDiv.textContent = 'AI';
+                contentDiv.classList.add('bg-green-100', 'text-green-800');
+            }
+
+            if (isImage) {
+                const img = document.createElement('img');
+                img.src = content;
+                img.alt = 'Uploaded Image';
+                img.classList.add('max-w-full', 'h-auto', 'rounded-lg', 'shadow-md');
+                contentDiv.appendChild(img);
+            } else {
+                contentDiv.textContent = content;
+            }
+
+            messageDiv.appendChild(avatarDiv);
+            messageDiv.appendChild(contentDiv);
+            chatMessagesDiv.appendChild(messageDiv);
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight; // Scroll to bottom
+        }
+
+        // Function to show/hide loading spinner
+        function showLoading(button, show) {
+            const spinner = document.createElement('span');
+            spinner.classList.add('loader');
+            spinner.id = 'currentLoadingSpinner'; // Give it an ID to easily remove
+
+            if (show) {
+                button.disabled = true;
+                button.appendChild(spinner);
+            } else {
+                button.disabled = false;
+                const existingSpinner = document.getElementById('currentLoadingSpinner');
+                if (existingSpinner) {
+                    existingSpinner.remove();
+                }
+            }
+        }
+
+        // Generic function to send data to the chat endpoint
+        async function sendChatData(formData, button) {
+            showLoading(button, true);
+            try {
+                const response = await fetch(`${API_BASE_URL}/chat`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to get response from agent.');
+                }
+
+                const data = await response.json();
+                console.log('Agent Response:', data);
+                displayMessage('assistant', data.response);
+                lastAssistantMessage = data.response; // Store for TTS
+                
+                // Update session ID if a new one was generated by the backend
+                if (data.session_id && data.session_id !== currentSessionId) {
+                    currentSessionId = data.session_id;
+                    sessionIdInput.value = currentSessionId;
+                    localStorage.setItem('adk_session_id', currentSessionId);
+                }
+
+            } catch (error) {
+                console.error('Error:', error);
+                displayMessage('assistant', `Error: ${error.message}`);
+            } finally {
+                showLoading(button, false);
+            }
+        }
+
+        // Event Listener for Send Text
+        sendTextBtn.addEventListener('click', async () => {
+            const query = textInput.value.trim();
+            if (query) {
+                displayMessage('user', query);
+                const formData = new FormData();
+                formData.append('query', query);
+                formData.append('user_id', userIdInput.value);
+                formData.append('session_id', sessionIdInput.value);
+                await sendChatData(formData, sendTextBtn);
+                textInput.value = ''; // Clear input
+            }
+        });
+
+        // Event Listener for Send Audio
+        sendAudioBtn.addEventListener('click', async () => {
+            const audioFile = audioInput.files[0];
+            if (audioFile) {
+                displayMessage('user', `Sending audio: ${audioFile.name}`);
+                const formData = new FormData();
+                formData.append('audio_file', audioFile);
+                formData.append('user_id', userIdInput.value);
+                formData.append('session_id', sessionIdInput.value);
+                // You can also send a query with audio if your agent supports it
+                formData.append('query', `Audio input received: ${audioFile.name}`); 
+                await sendChatData(formData, sendAudioBtn);
+                audioInput.value = ''; // Clear input
+            } else {
+                alert('Please select an audio file.');
+            }
+        });
+
+        // Event Listener for Send Image
+        sendImageBtn.addEventListener('click', async () => {
+            const imageFile = imageInput.files[0];
+            if (imageFile) {
+                // Display a preview of the image
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    displayMessage('user', e.target.result, true); // true indicates it's an image
+                };
+                reader.readAsDataURL(imageFile);
+
+                const formData = new FormData();
+                formData.append('image_file', imageFile);
+                formData.append('user_id', userIdInput.value);
+                formData.append('session_id', sessionIdInput.value);
+                // You can also send a query with image if your agent supports it
+                formData.append('query', `Image input received: ${imageFile.name}`); 
+                await sendChatData(formData, sendImageBtn);
+                imageInput.value = ''; // Clear input
+            } else {
+                alert('Please select an image file.');
+            }
+        });
+
+        // Event Listener for Play Last Response
+        playLastResponseBtn.addEventListener('click', async () => {
+            if (!lastAssistantMessage) {
+                alert('No assistant response to play yet.');
+                return;
+            }
+
+            playLoadingSpinner.classList.remove('hidden');
+            playLastResponseBtn.disabled = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('text', lastAssistantMessage);
+
+                const response = await fetch(`${API_BASE_URL}/synthesize_speech`, {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to synthesize speech.');
+                }
+
+                const audioBlob = await response.blob();
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const audio = new Audio(audioUrl);
+                audio.play();
+
+                audio.onended = () => {
+                    URL.revokeObjectURL(audioUrl); // Clean up the object URL after playing
+                };
+
+            } catch (error) {
+                console.error('Error playing audio:', error);
+                alert(`Error playing audio: ${error.message}`);
+            } finally {
+                playLoadingSpinner.classList.add('hidden');
+                playLastResponseBtn.disabled = false;
+            }
+        });
+
+        // Initial welcome message
+        displayMessage('assistant', 'Hello! How can I assist you today?');
+    </script>
+</body>
+</html>
+

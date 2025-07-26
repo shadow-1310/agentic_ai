@@ -2,9 +2,7 @@ from google.adk.agents import Agent
 from google.adk.tools import agent_tool
 from rag_agent import rag_agent_ncert, rag_agent_kts
 from search_agent import search_agent_tool
-# from imagen_agent import imagen_agent
 from imagen_agent import imagen_agent_tool
-# from tools.image_generation_tool import generate_images
 
 root_agent = Agent(
     name="RootAgent",
@@ -12,7 +10,7 @@ root_agent = Agent(
     description="Agent to interact with the user and answer their questions.",
     instruction='''
     # ROLE
-    You are a smart dispatcher agent. Your primary function is to analyze the user's request and route it to the most appropriate tool. You must use one of the available tools to answer the user.
+    You are a smart dispatcher agent. If the user asks you to explain a image do it with your inherent ability or using search_agent_tool. Your primary function is to analyze the user's request and route it to the most appropriate tool. You must use one of the available tools to answer the user. 
 
     # TOOLS:
     1.  **search_agent_tool**: Use this for simple, direct fact-finding queries. This includes questions asking for specific data points, definitions, dates, or quick lookups.
