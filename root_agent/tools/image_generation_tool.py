@@ -2,26 +2,18 @@ from google import genai
 from google.genai import types
 from google.adk.tools import ToolContext
 import os
-
-# GCS_BUCKET_NAME = os.getenv("GCS_BUCKET_NAME")
-# SCORE_THRESHOLD = int(os.getenv("SCORE_THRESHOLD", 45))
-# MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", 1))
-# IMAGEN_MODEL = os.getenv("IMAGEN_MODEL", "imagen-3.0-generate-002")
-# GENAI_MODEL = os.getenv("GENAI_MODEL", "gemini-2.0-flash")
-
+from PIL import Image
 
 client = genai.Client(
     vertexai=True
 )
 
-
 async def generate_images(imagen_prompt: str, tool_context: ToolContext):
-
+    print("************calling imagen model******************")
     try:
-
         response = client.models.generate_images(
-            # model="imagen-3.0-generate-002",
-            model="imagen-4.0-generate-preview-06-06",
+            # model="imagen-4.0-generate-preview-06-06",
+            model="imagen-3.0-generate-002",
             prompt=imagen_prompt,
             config=types.GenerateImagesConfig(
                 number_of_images=1,
@@ -30,19 +22,27 @@ async def generate_images(imagen_prompt: str, tool_context: ToolContext):
                 person_generation="allow_adult",
             ),
         )
+
+        # print(response)
         generated_image_paths = []
         if response.generated_images is not None:
             for generated_image in response.generated_images:
-                # Get the image bytes
                 image_bytes = generated_image.image.image_bytes
                 counter = str(tool_context.state.get("loop_iteration", 0))
                 artifact_name = f"generated_image_" + counter + ".png"
+                
+                with open(artifact_name, "wb") as f:
+                    f.write(image_bytes)
                 report_artifact = types.Part.from_bytes(
                     data=image_bytes, mime_type="image/png"
                 )
-
-                await tool_context.save_artifact(artifact_name, report_artifact)
-                print(f"Image also saved as ADK artifact: {artifact_name}")
+                try:
+                    tool_context.save_artifact(artifact=report_artifact, filename=artifact_name)
+                    artifact_list = tool_context.list_artifacts()
+                    print("Artifacts in context:", artifact_list)
+                    print(f"Image also saved as ADK artifact: {artifact_name}")
+                except Exception as e:
+                    print(f"error occured in saving artifacts:", e)
 
                 return {
                     "status": "success",
@@ -61,3 +61,33 @@ async def generate_images(imagen_prompt: str, tool_context: ToolContext):
     except Exception as e:
 
         return {"status": "error", "message": "No images generated.  {e}"}
+
+def save_to_gcs(tool_context: ToolContext, image_bytes, filename: str, counter: str):
+    # --- Save to GCS ---
+    storage_client = storage.Client()  # Initialize GCS client
+    bucket_name = config.GCS_BUCKET_NAME
+
+    unique_id = tool_context.state.get("unique_id", "")
+    current_date_str = datetime.utcnow().strftime("%Y-%m-%d")
+    unique_filename = filename
+    gcs_blob_name = f"{current_date_str}/{unique_id}/{unique_filename}"
+
+    bucket = storage_client.bucket(bucket_name)
+    blob = bucket.blob(gcs_blob_name)
+
+    try:
+        blob.upload_from_string(image_bytes, content_type="image/png")
+        gcs_uri = f"gs://{bucket_name}/{gcs_blob_name}"
+
+        # Store GCS URI in session context
+        # Store GCS URI in session context
+        tool_context.state["generated_image_gcs_uri_" + counter] = gcs_uri
+
+    except Exception as e_gcs:
+
+        # Decide if this is a fatal error for the tool
+        return {
+            "status": "error",
+            "message": f"Image generated but failed to upload to GCS: {e_gcs}",
+        }
+        # --- End Save to GCS ---
